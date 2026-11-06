@@ -1,0 +1,37 @@
+name: booking-bridge
+version: "1.0.0"
+description: "Find free time, book, list, reschedule and cancel real Google Calendar consults from Hermes, using Hermes' own Google sign-in."
+author: Kyle Bartlett / Bartlett Labs
+license: MIT
+homepage: https://github.com/kyle-bartlett/booking-bridge
+tags: [calendar, booking, google, consulting]
+requires_hermes: ">=0.22.7"
+provides_tools:
+  - list_availability
+  - list_upcoming
+  - book_event
+  - reschedule_event
+  - cancel_event
+requires_env:
+  - name: BOOKING_BRIDGE_CLIENT_ID
+    description: "Google Cloud OAuth client ID (Desktop app) with the Calendar API enabled"
+    url: "https://console.cloud.google.com/apis/credentials"
+  - name: BOOKING_BRIDGE_CLIENT_SECRET
+    description: "Google Cloud OAuth client secret for the same Desktop app client"
+    url: "https://console.cloud.google.com/apis/credentials"
+    secret: true
+oauth:
+  - id: google
+    authorize_url: https://accounts.google.com/o/oauth2/v2/auth
+    token_url: https://oauth2.googleapis.com/token
+    scopes:
+      - https://www.googleapis.com/auth/calendar.events
+      - https://www.googleapis.com/auth/calendar.freebusy
+    client_id_env: BOOKING_BRIDGE_CLIENT_ID
+    client_secret_env: BOOKING_BRIDGE_CLIENT_SECRET
+    hosts: [www.googleapis.com]
+    authorize_params: {access_type: offline, prompt: consent}
+config_schema:
+  default_calendar: {type: str, default: "primary", description: "Calendar ID to use when none is given"}
+  default_timezone: {type: str, default: "America/Chicago", description: "IANA timezone for slots and bookings"}
+  default_duration_minutes: {type: int, default: 30, description: "Consult length in minutes"}

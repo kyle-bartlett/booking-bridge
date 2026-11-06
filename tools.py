@@ -1,0 +1,213 @@
+"""Tool handlers: args dict in, JSON string out, never raise."""
+
+import hashlib
+import json
+import os
+from datetime import datetime, timedelta, timezone as dt_tz
+from zoneinfo import ZoneInfo
+
+from . import calendar_api as api
+
+MAX_WINDOW_DAYS = 14
+DEFAULTS = {"default_calendar": "primary", "default_timezone": "America/Chicago", "default_duration_minutes": 30}
+_UNATTENDED_PLATFORMS = {"webhook", "msgraph_webhook", "api_server"}
+
+
+def _out(**kw) -> str:
+    return json.dumps(kw, default=str)
+
+
+def _err(msg: str, **kw) -> str:
+    return _out(ok=False, error=msg, **kw)
+
+
+def _setting(name: str, kwargs: dict):
+    cfg = kwargs.get("settings") or kwargs.get("config") or {}
+    if isinstance(cfg, dict) and cfg.get(name) not in (None, ""):
+        return cfg[name]
+    return DEFAULTS[name]
+
+
+def _unattended() -> bool:
+    """Write tools fail closed when nobody can approve (cron, webhook-style platforms)."""
+    if os.environ.get("HERMES_CRON_SESSION", "").lower() in ("1", "true", "yes"):
+        return True
+    return os.environ.get("HERMES_SESSION_PLATFORM", "") in _UNATTENDED_PLATFORMS
+
+
+def _write_guard(args: dict):
+    if args.get("confirm") is not True:
+        return _err("Not done: confirm must be true, and only after the user explicitly agrees to this exact action.")
+    if _unattended():
+        return _err("Not done: this run is unattended, so nobody can approve a calendar change.")
+    return None
+
+
+def _parse(value: str, tz: ZoneInfo) -> datetime:
+    dt = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    return dt.replace(tzinfo=tz) if dt.tzinfo is None else dt
+
+
+def _zone(args: dict, kwargs: dict) -> ZoneInfo:
+    return ZoneInfo(args.get("timezone") or _setting("default_timezone", kwargs))
+
+
+def _rfc(dt: datetime) -> str:
+    return dt.isoformat()
+
+
+def _busy_intervals(busy: list) -> list:
+    return sorted((_parse(b["start"], dt_tz.utc), _parse(b["end"], dt_tz.utc)) for b in busy)
+
+
+def _free_slots(start: datetime, end: datetime, busy: list, minutes: int) -> list:
+    """Free windows of at least `minutes`, cut into back-to-back slots of that length."""
+    step, slots, cursor = timedelta(minutes=minutes), [], start
+    for b_start, b_end in _busy_intervals(busy) + [(end, end)]:
+        while cursor + step <= min(b_start, end):
+            slots.append((cursor, cursor + step))
+            cursor += step
+        cursor = max(cursor, b_end)
+    return slots
+
+
+def _slim(ev: dict) -> dict:
+    return {"event_id": ev.get("id"), "title": ev.get("summary", ""),
+            "start": (ev.get("start") or {}).get("dateTime") or (ev.get("start") or {}).get("date"),
+            "end": (ev.get("end") or {}).get("dateTime") or (ev.get("end") or {}).get("date"),
+            "htmlLink": ev.get("htmlLink"), "status": ev.get("status")}
+
+
+def list_availability(args: dict, **kwargs) -> str:
+    try:
+        tz = _zone(args, kwargs)
+        cal = args.get("calendar_id") or _setting("default_calendar", kwargs)
+        minutes = int(args.get("duration_minutes") or _setting("default_duration_minutes", kwargs))
+        if minutes < 5 or minutes > 480:
+            return _err("duration_minutes must be between 5 and 480.")
+        t0, t1 = _parse(args["time_min"], tz), _parse(args["time_max"], tz)
+        if t1 <= t0:
+            return _err("time_max must be after time_min.")
+        if t1 - t0 > timedelta(days=MAX_WINDOW_DAYS):
+            return _err(f"Window too large. Ask for at most {MAX_WINDOW_DAYS} days at a time.")
+        busy = api.free_busy(_rfc(t0), _rfc(t1), str(tz), cal)
+        slots = _free_slots(t0, t1, busy, minutes)
+        return _out(ok=True, calendar_id=cal, timezone=str(tz), duration_minutes=minutes,
+                    slots=[{"start": _rfc(s.astimezone(tz)), "end": _rfc(e.astimezone(tz))} for s, e in slots[:60]],
+                    truncated=len(slots) > 60)
+    except api.CalendarError as exc:
+        return _err(str(exc))
+    except KeyError as exc:
+        return _err(f"Missing argument: {exc.args[0]}")
+    except Exception as exc:
+        return _err(f"Could not list availability: {type(exc).__name__}: {exc}")
+
+
+def list_upcoming(args: dict, **kwargs) -> str:
+    try:
+        cal = args.get("calendar_id") or _setting("default_calendar", kwargs)
+        n = max(1, min(int(args.get("max_results") or 10), 25))
+        tmin = args.get("time_min") or datetime.now(dt_tz.utc).isoformat()
+        if args.get("time_min"):
+            tmin = _rfc(_parse(args["time_min"], ZoneInfo(_setting("default_timezone", kwargs))))
+        events = api.list_events(cal, tmin, n)
+        return _out(ok=True, calendar_id=cal, events=[_slim(e) for e in events[:n]])
+    except api.CalendarError as exc:
+        return _err(str(exc))
+    except Exception as exc:
+        return _err(f"Could not list events: {type(exc).__name__}: {exc}")
+
+
+def _key(*parts) -> str:
+    return hashlib.sha256("|".join(str(p) for p in parts).encode()).hexdigest()[:32]
+
+
+def book_event(args: dict, **kwargs) -> str:
+    try:
+        blocked = _write_guard(args)
+        if blocked:
+            return blocked
+        tz = _zone(args, kwargs)
+        cal = args.get("calendar_id") or _setting("default_calendar", kwargs)
+        t0 = _parse(args["start"], tz)
+        t1 = _parse(args["end"], tz) if args.get("end") else t0 + timedelta(minutes=int(_setting("default_duration_minutes", kwargs)))
+        if t1 <= t0:
+            return _err("end must be after start.")
+        if t0 < datetime.now(dt_tz.utc):
+            return _err("That start time is in the past.")
+        title = str(args["title"]).strip()[:200]
+        attendees = [str(a).strip() for a in (args.get("attendees") or []) if "@" in str(a)]
+        idem = _key(cal, title, _rfc(t0.astimezone(dt_tz.utc)), _rfc(t1.astimezone(dt_tz.utc)), ",".join(sorted(attendees)))
+        existing = [e for e in api.list_events(cal, _rfc(t0 - timedelta(minutes=1)), 10)
+                    if ((e.get("extendedProperties") or {}).get("private") or {}).get("bookingBridgeKey") == idem]
+        if existing:
+            return _out(ok=True, duplicate=True, note="Already booked; nothing new created.", **_slim(existing[0]))
+        busy = api.free_busy(_rfc(t0), _rfc(t1), str(tz), cal)
+        if busy:
+            return _err("That time is no longer free. Nothing was booked.",
+                        conflicts=[{"start": b["start"], "end": b["end"]} for b in busy])
+        body = {"summary": title, "start": {"dateTime": _rfc(t0), "timeZone": str(tz)},
+                "end": {"dateTime": _rfc(t1), "timeZone": str(tz)},
+                "extendedProperties": {"private": {"bookingBridgeKey": idem}}}
+        if args.get("description"):
+            body["description"] = str(args["description"])[:4000]
+        if attendees:
+            body["attendees"] = [{"email": a} for a in attendees]
+        ev = api.insert_event(cal, body)
+        return _out(ok=True, **_slim(ev))
+    except api.CalendarError as exc:
+        return _err(str(exc))
+    except KeyError as exc:
+        return _err(f"Missing argument: {exc.args[0]}")
+    except Exception as exc:
+        return _err(f"Could not book: {type(exc).__name__}: {exc}")
+
+
+def reschedule_event(args: dict, **kwargs) -> str:
+    try:
+        blocked = _write_guard(args)
+        if blocked:
+            return blocked
+        tz = _zone(args, kwargs)
+        cal = args.get("calendar_id") or _setting("default_calendar", kwargs)
+        eid = str(args["event_id"])
+        ev = api.get_event(cal, eid)
+        old0 = _parse(ev["start"]["dateTime"], tz)
+        old1 = _parse(ev["end"]["dateTime"], tz)
+        t0 = _parse(args["start"], tz)
+        t1 = _parse(args["end"], tz) if args.get("end") else t0 + (old1 - old0)
+        if t1 <= t0:
+            return _err("end must be after start.")
+        busy = [b for b in api.free_busy(_rfc(t0), _rfc(t1), str(tz), cal)
+                if not (_parse(b["start"], dt_tz.utc) == old0.astimezone(dt_tz.utc)
+                        and _parse(b["end"], dt_tz.utc) == old1.astimezone(dt_tz.utc))]
+        if busy:
+            return _err("That time is not free. Nothing was moved.",
+                        conflicts=[{"start": b["start"], "end": b["end"]} for b in busy])
+        out = api.patch_event(cal, eid, {"start": {"dateTime": _rfc(t0), "timeZone": str(tz)},
+                                         "end": {"dateTime": _rfc(t1), "timeZone": str(tz)}})
+        return _out(ok=True, **_slim(out))
+    except api.CalendarError as exc:
+        return _err(str(exc))
+    except KeyError as exc:
+        return _err(f"Missing argument or event field: {exc.args[0]}")
+    except Exception as exc:
+        return _err(f"Could not reschedule: {type(exc).__name__}: {exc}")
+
+
+def cancel_event(args: dict, **kwargs) -> str:
+    try:
+        blocked = _write_guard(args)
+        if blocked:
+            return blocked
+        cal = args.get("calendar_id") or _setting("default_calendar", kwargs)
+        eid = str(args["event_id"])
+        ev = api.get_event(cal, eid)
+        api.delete_event(cal, eid)
+        return _out(ok=True, cancelled=True, event_id=eid, title=ev.get("summary", ""))
+    except api.CalendarError as exc:
+        return _err(str(exc))
+    except KeyError as exc:
+        return _err(f"Missing argument: {exc.args[0]}")
+    except Exception as exc:
+        return _err(f"Could not cancel: {type(exc).__name__}: {exc}")
