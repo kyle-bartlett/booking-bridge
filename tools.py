@@ -69,7 +69,7 @@ def _truthy(v: str) -> bool:
 def _unattended():
     """Reason string when nobody is present to approve a calendar change, else None.
 
-    Blocked: cron runs, single-query (-q / finite) runs, and the programmatic webhook / msgraph_webhook /
+    Blocked: cron runs, single-query (-q) runs, and the programmatic webhook / msgraph_webhook /
     api_server platforms. Interactive CLI/TUI/desktop and human chat gateways are allowed: the user's
     explicit agreement in the live conversation is what confirm=true records.
     """
@@ -82,12 +82,6 @@ def _unattended():
         return "a scheduled cron run"
     if _truthy(_session_env("HERMES_SINGLE_QUERY_SESSION")):
         return "a single-query (-q) run"
-    try:
-        from gateway.session_finite import finite_turn_required
-        if finite_turn_required() is True:
-            return "a single-query (finite) run"
-    except Exception:
-        pass
     platform = _session_env("HERMES_SESSION_PLATFORM")
     if platform in _UNATTENDED_PLATFORMS:
         return f"the unattended {platform} platform"

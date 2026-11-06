@@ -18,7 +18,7 @@ Slash command: `/booking status` shows whether Google is signed in and your next
 `book_event`, `reschedule_event` and `cancel_event` need `confirm: true`, which the agent sets only after you agree to the exact action in the conversation. They **refuse to run** (and change nothing) in:
 
 - cron / scheduled runs,
-- single-query runs (`hermes chat -q`, finite turns),
+- single-query runs (`hermes chat -q`),
 - the programmatic `webhook`, `msgraph_webhook` and `api_server` platforms.
 
 They **do run** in an interactive CLI, TUI or Desktop session and in human chat gateways (for example Telegram), where your reply in the chat is the approval. This is a conversational confirmation, not a Hermes approval card: Hermes does not route plugin tool calls through its dangerous-command approval prompt. Read-only tools (`list_availability`, `list_upcoming`) work everywhere.
