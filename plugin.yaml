@@ -1,5 +1,5 @@
 name: booking-bridge
-version: "1.1.0"
+version: "1.1.1"
 description: "Find free time, book, list, reschedule and cancel real Google Calendar consults from Hermes, using Hermes' own Google sign-in."
 author: Kyle Bartlett / Bartlett Labs
 license: MIT

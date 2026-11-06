@@ -88,7 +88,10 @@ class T(unittest.TestCase):
         for label, env in (("kanban", {"HERMES_KANBAN_TASK": "t1"}), ("oneshot source", {"HERMES_SESSION_SOURCE": "oneshot"}),
                            ("unknown platform", {"HERMES_SESSION_PLATFORM": "some_new_plugin_platform"}),
                            ("email", {"HERMES_SESSION_PLATFORM": "email"}),
-                           ("unknown source", {"HERMES_SESSION_SOURCE": "automation"}),("cron", {"HERMES_CRON_SESSION": "1"}), ("single-query", {"HERMES_SINGLE_QUERY_SESSION": "1"}),
+                           ("unknown source", {"HERMES_SESSION_SOURCE": "automation"}),
+                           ("gateway platform", {"HERMES_SESSION_PLATFORM": "gateway"}),
+                           ("gateway source", {"HERMES_SESSION_SOURCE": "gateway"}),
+                           ("tool source", {"HERMES_SESSION_SOURCE": "tool"}),("cron", {"HERMES_CRON_SESSION": "1"}), ("single-query", {"HERMES_SINGLE_QUERY_SESSION": "1"}),
                            ("webhook", {"HERMES_SESSION_PLATFORM": "webhook"}),
                            ("msgraph_webhook", {"HERMES_SESSION_PLATFORM": "msgraph_webhook"}),
                            ("api_server", {"HERMES_SESSION_PLATFORM": "api_server"})):
@@ -106,7 +109,7 @@ class T(unittest.TestCase):
 
     def test_interactive_and_chat_gateway_allowed(self):
         clean = {k: "" for k in ENVKEYS}
-        for platform in ("", "cli", "local", "telegram", "slack"):
+        for platform in ("", "cli", "local", "telegram", "slack", "whatsapp_cloud"):
             with self.subTest(platform), mock.patch.dict(os.environ, dict(clean, HERMES_SESSION_PLATFORM=platform)):
                 out, touched = self._write_all()
                 self.assertTrue(touched)
@@ -125,6 +128,13 @@ class T(unittest.TestCase):
             self.assertIn("signed in", tools.status_text())
         with mock.patch.object(api, "list_events", side_effect=api.CalendarError("Not signed in. Run: hermes auth add booking-bridge:google")):
             self.assertIn("hermes auth add booking-bridge:google", tools.status_text())
+
+    def test_missing_client_names_env_vars(self):
+        class AE(Exception):
+            code = "oauth_client_id_missing"
+        with mock.patch.object(api, "AuthError", AE), mock.patch.object(api, "credentialed_provider_request", side_effect=AE()):
+            r = json.loads(tools.list_upcoming({}))
+        self.assertFalse(r["ok"]); self.assertIn("BOOKING_BRIDGE_CLIENT_ID", r["error"]); self.assertIn("hermes auth add booking-bridge:google", r["error"])
 
     def test_cancel(self):
         with mock.patch.object(api, "get_event", return_value={"summary": "x"}), mock.patch.object(api, "delete_event") as d:

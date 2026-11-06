@@ -67,7 +67,10 @@ def _truthy(v: str) -> bool:
 
 
 # Allowlist, not denylist: anything not named here (unknown plugin platforms, kanban, email, sms, relay, ...) fails closed.
-_LOCAL_SURFACES = {"", "local", "cli", "tui", "desktop", "acp", "gateway"}
+# "" is needed: the interactive CLI and ACP bind no platform or source. "local" is the local-viewer platform.
+# Neither can be told apart from some unattended callers (library callers, delegated children), which is why the
+# Hermes approval gate (pre_tool_call) is the primary control and this check is a second layer.
+_LOCAL_SURFACES = {"", "local", "cli", "tui", "desktop", "acp"}
 _HUMAN_CHAT_PLATFORMS = {"telegram", "discord", "slack", "whatsapp", "whatsapp_cloud", "signal", "mattermost",
                          "matrix", "bluebubbles"}
 

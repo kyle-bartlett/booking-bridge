@@ -19,7 +19,11 @@ def call(method: str, path: str, json=None):
     except ProviderNotSignedIn:
         raise CalendarError(f"Not signed in to Google. Run: {SIGN_IN}")
     except AuthError as exc:
-        raise CalendarError(f"Google auth problem ({getattr(exc, 'code', 'auth_error')}). Run: {SIGN_IN}")
+        code = getattr(exc, "code", "auth_error")
+        if code in ("oauth_client_id_missing", "invalid_client"):
+            raise CalendarError("The Google OAuth client is not set up. Set BOOKING_BRIDGE_CLIENT_ID and "
+                                f"BOOKING_BRIDGE_CLIENT_SECRET (Desktop app client), then run: {SIGN_IN}")
+        raise CalendarError(f"Google auth problem ({code}). Run: {SIGN_IN}")
     except PermissionError as exc:
         raise CalendarError(f"Request refused by Hermes: {exc}")
     except Exception as exc:  # network etc.; message only, no traceback
