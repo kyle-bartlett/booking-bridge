@@ -12,3 +12,9 @@ def register(ctx):
         ("cancel_event", schemas.CANCEL_EVENT, tools.cancel_event),
     ):
         ctx.register_tool(name=name, toolset="booking-bridge", schema=schema, handler=handler)
+
+    from pathlib import Path
+
+    skill = Path(__file__).parent / "skills" / "consult-booking" / "SKILL.md"
+    if skill.exists() and hasattr(ctx, "register_skill"):
+        ctx.register_skill("consult-booking", skill, description="Book a strategy consult with the booking-bridge tools.")

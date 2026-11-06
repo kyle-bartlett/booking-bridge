@@ -94,6 +94,30 @@ class T(unittest.TestCase):
             self.assertIn("  - " + n, manifest)
         self.assertEqual(len(names), 5)
 
+    def test_not_signed_in_names_command(self):
+        with mock.patch.object(api, "credentialed_provider_request", side_effect=api.ProviderNotSignedIn("x")):
+            r = json.loads(tools.list_availability({"time_min": iso(NEXT), "time_max": iso(NEXT + timedelta(hours=2))}))
+        self.assertFalse(r["ok"]); self.assertIn("hermes auth add booking-bridge:google", r["error"])
+
+    def test_reschedule_moves_when_free_and_blocks_when_busy(self):
+        ev = {"start": {"dateTime": iso(NEXT)}, "end": {"dateTime": iso(NEXT + timedelta(minutes=30))}}
+        args = {"event_id": "e1", "start": iso(NEXT + timedelta(hours=2)), "confirm": True}
+        with mock.patch.object(api, "get_event", return_value=ev), mock.patch.object(api, "free_busy", return_value=[]), \
+                mock.patch.object(api, "patch_event", return_value={"id": "e1"}) as p:
+            r = json.loads(tools.reschedule_event(args))
+        self.assertTrue(r["ok"]); p.assert_called_once()
+        busy = [{"start": iso(NEXT + timedelta(hours=2)), "end": iso(NEXT + timedelta(hours=3))}]
+        with mock.patch.object(api, "get_event", return_value=ev), mock.patch.object(api, "free_busy", return_value=busy), \
+                mock.patch.object(api, "patch_event") as p2:
+            r = json.loads(tools.reschedule_event(args))
+        self.assertFalse(r["ok"]); p2.assert_not_called()
+
+    def test_skill_registered(self):
+        calls = []
+        ctx = types.SimpleNamespace(register_tool=lambda **k: None, register_skill=lambda *a, **k: calls.append(a))
+        init.register(ctx)
+        self.assertEqual(calls[0][0], "consult-booking")
+
 
 if __name__ == "__main__":
     unittest.main()
