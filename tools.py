@@ -13,6 +13,19 @@ DEFAULTS = {"default_calendar": "primary", "default_timezone": "America/Chicago"
 _UNATTENDED_PLATFORMS = {"webhook", "msgraph_webhook", "api_server"}
 
 
+def status_text() -> str:
+    """Text for the /booking status command."""
+    try:
+        r = json.loads(list_upcoming({"max_results": 5}))
+    except Exception as exc:  # pragma: no cover
+        return f"booking-bridge: could not read calendar ({type(exc).__name__})."
+    if not r.get("ok"):
+        return "booking-bridge: " + str(r.get("error"))
+    lines = ["booking-bridge: signed in to Google Calendar. Next events:"]
+    lines += [f"- {e['start']}  {e['title']}" for e in r["events"]] or ["- none upcoming"]
+    return "\n".join(lines)
+
+
 def _out(**kw) -> str:
     return json.dumps(kw, default=str)
 
@@ -21,25 +34,72 @@ def _err(msg: str, **kw) -> str:
     return _out(ok=False, error=msg, **kw)
 
 
+_CTX = None  # the PluginContext, bound once by register()
+
+
+def bind(ctx) -> None:
+    global _CTX
+    _CTX = ctx
+
+
 def _setting(name: str, kwargs: dict):
-    cfg = kwargs.get("settings") or kwargs.get("config") or {}
-    if isinstance(cfg, dict) and cfg.get(name) not in (None, ""):
-        return cfg[name]
+    """Configured value (plugins.entries.booking-bridge.settings), else the manifest default."""
+    try:
+        if _CTX is not None:
+            val = _CTX.get_config(name, None)
+            if val not in (None, ""):
+                return val
+    except Exception:
+        pass
     return DEFAULTS[name]
 
 
-def _unattended() -> bool:
-    """Write tools fail closed when nobody can approve (cron, webhook-style platforms)."""
-    if os.environ.get("HERMES_CRON_SESSION", "").lower() in ("1", "true", "yes"):
-        return True
-    return os.environ.get("HERMES_SESSION_PLATFORM", "") in _UNATTENDED_PLATFORMS
+def _session_env(name: str) -> str:
+    try:
+        from gateway.session_context import get_session_env  # documented session accessor
+        return get_session_env(name, "") or ""
+    except Exception:
+        return os.environ.get(name, "")
+
+
+def _truthy(v: str) -> bool:
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _unattended():
+    """Reason string when nobody is present to approve a calendar change, else None.
+
+    Blocked: cron runs, single-query (-q / finite) runs, and the programmatic webhook / msgraph_webhook /
+    api_server platforms. Interactive CLI/TUI/desktop and human chat gateways are allowed: the user's
+    explicit agreement in the live conversation is what confirm=true records.
+    """
+    try:
+        if _CTX is not None and _CTX.current_cron_execution() is not None:
+            return "a scheduled cron run"
+    except Exception:
+        pass
+    if _truthy(_session_env("HERMES_CRON_SESSION")):
+        return "a scheduled cron run"
+    if _truthy(_session_env("HERMES_SINGLE_QUERY_SESSION")):
+        return "a single-query (-q) run"
+    try:
+        from gateway.session_finite import finite_turn_required
+        if finite_turn_required() is True:
+            return "a single-query (finite) run"
+    except Exception:
+        pass
+    platform = _session_env("HERMES_SESSION_PLATFORM")
+    if platform in _UNATTENDED_PLATFORMS:
+        return f"the unattended {platform} platform"
+    return None
 
 
 def _write_guard(args: dict):
     if args.get("confirm") is not True:
         return _err("Not done: confirm must be true, and only after the user explicitly agrees to this exact action.")
-    if _unattended():
-        return _err("Not done: this run is unattended, so nobody can approve a calendar change.")
+    why = _unattended()
+    if why:
+        return _err(f"Not done: this is {why}, so nobody can approve a calendar change. Run it from an interactive session.")
     return None
 
 

@@ -70,10 +70,57 @@ class T(unittest.TestCase):
             r = json.loads(tools.book_event({"title": "Strategy consult", "start": iso(NEXT), "confirm": True}))
         self.assertTrue(r["duplicate"]); ins2.assert_not_called()
 
-    def test_unattended_fails_closed(self):
-        with mock.patch.dict(os.environ, {"HERMES_CRON_SESSION": "1"}):
-            r = json.loads(tools.cancel_event({"event_id": "e1", "confirm": True}))
-        self.assertFalse(r["ok"])
+    def _write_all(self):
+        out = []
+        with mock.patch.object(api, "get_event", return_value={"summary": "x", "start": {"dateTime": iso(NEXT)}, "end": {"dateTime": iso(NEXT)}}), \
+             mock.patch.object(api, "delete_event") as d, mock.patch.object(api, "insert_event") as i, \
+             mock.patch.object(api, "patch_event") as p, mock.patch.object(api, "list_events", return_value=[]), \
+             mock.patch.object(api, "free_busy", return_value=[]):
+            out.append(json.loads(tools.cancel_event({"event_id": "e1", "confirm": True})))
+            out.append(json.loads(tools.book_event({"title": "t", "start": iso(NEXT), "confirm": True})))
+            out.append(json.loads(tools.reschedule_event({"event_id": "e1", "start": iso(NEXT), "confirm": True})))
+            touched = d.called or i.called or p.called
+        return out, touched
+
+    def test_unattended_contexts_fail_closed(self):
+        clean = {k: "" for k in ("HERMES_CRON_SESSION", "HERMES_SINGLE_QUERY_SESSION", "HERMES_SESSION_PLATFORM")}
+        for label, env in (("cron", {"HERMES_CRON_SESSION": "1"}), ("single-query", {"HERMES_SINGLE_QUERY_SESSION": "1"}),
+                           ("webhook", {"HERMES_SESSION_PLATFORM": "webhook"}),
+                           ("msgraph_webhook", {"HERMES_SESSION_PLATFORM": "msgraph_webhook"}),
+                           ("api_server", {"HERMES_SESSION_PLATFORM": "api_server"})):
+            with self.subTest(label), mock.patch.dict(os.environ, dict(clean, **env)):
+                out, touched = self._write_all()
+                self.assertTrue(all(not r["ok"] for r in out)); self.assertFalse(touched)
+
+    def test_cron_execution_object_fails_closed(self):
+        tools.bind(types.SimpleNamespace(current_cron_execution=lambda: object(), get_config=lambda k, d=None: d))
+        try:
+            out, touched = self._write_all()
+            self.assertTrue(all(not r["ok"] for r in out)); self.assertFalse(touched)
+        finally:
+            tools.bind(None)
+
+    def test_interactive_and_chat_gateway_allowed(self):
+        clean = {k: "" for k in ("HERMES_CRON_SESSION", "HERMES_SINGLE_QUERY_SESSION")}
+        for platform in ("", "cli", "telegram"):
+            with self.subTest(platform), mock.patch.dict(os.environ, dict(clean, HERMES_SESSION_PLATFORM=platform)):
+                out, touched = self._write_all()
+                self.assertTrue(touched)
+
+    def test_settings_from_ctx(self):
+        tools.bind(types.SimpleNamespace(current_cron_execution=lambda: None,
+                                         get_config=lambda k, d=None: {"default_calendar": "team@x"}.get(k, d)))
+        try:
+            self.assertEqual(tools._setting("default_calendar", {}), "team@x")
+            self.assertEqual(tools._setting("default_duration_minutes", {}), 30)
+        finally:
+            tools.bind(None)
+
+    def test_status_command(self):
+        with mock.patch.object(api, "list_events", return_value=[]):
+            self.assertIn("signed in", tools.status_text())
+        with mock.patch.object(api, "list_events", side_effect=api.CalendarError("Not signed in. Run: hermes auth add booking-bridge:google")):
+            self.assertIn("hermes auth add booking-bridge:google", tools.status_text())
 
     def test_cancel(self):
         with mock.patch.object(api, "get_event", return_value={"summary": "x"}), mock.patch.object(api, "delete_event") as d:
@@ -87,8 +134,13 @@ class T(unittest.TestCase):
 
     def test_register_matches_manifest(self):
         names = []
-        ctx = types.SimpleNamespace(register_tool=lambda **k: names.append(k["name"]))
+        extra = []
+        ctx = types.SimpleNamespace(register_tool=lambda **k: names.append(k["name"]),
+                                    register_command=lambda *a, **k: extra.append("cmd"),
+                                    register_skill=lambda *a, **k: extra.append("skill"),
+                                    get_config=lambda k, d=None: d, current_cron_execution=lambda: None)
         init.register(ctx)
+        self.assertEqual(extra, ["cmd", "skill"])
         manifest = (Path(__file__).resolve().parents[1] / "plugin.yaml").read_text()
         for n in names:
             self.assertIn("  - " + n, manifest)
@@ -114,7 +166,9 @@ class T(unittest.TestCase):
 
     def test_skill_registered(self):
         calls = []
-        ctx = types.SimpleNamespace(register_tool=lambda **k: None, register_skill=lambda *a, **k: calls.append(a))
+        ctx = types.SimpleNamespace(register_tool=lambda **k: None, register_command=lambda *a, **k: None,
+                                    register_skill=lambda *a, **k: calls.append(a),
+                                    get_config=lambda k, d=None: d, current_cron_execution=lambda: None)
         init.register(ctx)
         self.assertEqual(calls[0][0], "consult-booking")
 
