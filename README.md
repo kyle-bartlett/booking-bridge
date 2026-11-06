@@ -32,12 +32,18 @@ They **do run** in an interactive CLI, TUI or Desktop session and in human chat 
 
 Settings (`plugins.entries.booking-bridge.settings`): `default_calendar` (primary), `default_timezone` (America/Chicago), `default_duration_minutes` (30).
 
+## Revoke access
+
+- In Hermes: `hermes auth logout booking-bridge:google` removes the stored Google sign-in. Run `hermes auth add booking-bridge:google` to sign in again.
+- At Google: remove the grant at <https://myaccount.google.com/permissions> (pick your OAuth client, then "Delete all connections"). This also invalidates the token if Hermes cannot reach it.
+
 ## Disclosures
 
 - Network: only `https://www.googleapis.com` (Google Calendar API v3), through Hermes' `credentialed_provider_request`. Scopes: `calendar.events`, `calendar.freebusy`.
 - Credentials: you supply your own Google OAuth client; Hermes stores and refreshes the token. The plugin reads no files, `.env`, `auth.json` or keychains.
 - Calendar changes (only when you confirm in an attended session, see above): book, reschedule and cancel write to your calendar and can send invitation emails to attendees you list. They require `confirm: true`.
 - Booked events carry a private extended property `bookingBridgeKey` (a hash) used to avoid duplicate bookings.
+- Revoking: `hermes auth logout booking-bridge:google`, or remove the grant at <https://myaccount.google.com/permissions> (see "Revoke access").
 - No shell commands, no background processes, no telemetry, no self-update.
 
 ## Develop
