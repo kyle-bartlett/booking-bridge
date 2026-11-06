@@ -15,16 +15,13 @@ A native Hermes plugin that finds free time, books, lists, reschedules and cance
 Slash command: `/booking status` shows whether Google is signed in and your next events.
 
 ### When write tools run
-`book_event`, `reschedule_event` and `cancel_event` need `confirm: true`, which the agent sets only after you agree to the exact action in the conversation. They run only when the plugin can tell a person is present, using an **allowlist**:
+`book_event`, `reschedule_event` and `cancel_event` change your calendar, so each one goes through **Hermes' own approval gate** first. The plugin registers a `pre_tool_call` hook that returns `{"action": "approve"}` for those three tools; Hermes then shows its approval prompt (Once, Session or Always) with a plain-English summary of the exact action, and the call only runs if you approve. The "Always" choice is scoped to that exact set of arguments, not to every booking.
 
-- **Run:** an interactive CLI, TUI, Desktop or ACP session, and these human chat platforms: Telegram, Discord, Slack, WhatsApp (including WhatsApp Cloud), Signal, Mattermost, Matrix, BlueBubbles. Your reply in the chat is the approval.
-- **Refuse, changing nothing:** cron runs, single-query / one-shot runs (`hermes chat -q`, `hermes -z`), kanban workers, the `webhook`, `msgraph_webhook` and `api_server` platforms, email, SMS, and **any platform or session source not named above**, including new or unknown ones.
+Hermes fails the approval closed wherever nobody can answer, and changes nothing there: cron runs, single-query / one-shot runs (`hermes chat -q`, `hermes -z`, including ones submitted through the gateway daemon), and the `webhook`, `msgraph_webhook` and `api_server` platforms. The plugin does not read private Hermes state to decide this; it only uses the public hook contract.
 
-Read-only tools (`list_availability`, `list_upcoming`) work everywhere.
+On top of that the tools keep their own checks, so a missing hook can never open a hole: each write needs `confirm: true` (set by the agent only after you agree to the exact action), and each refuses on cron, single-query, kanban, webhook-style and any unrecognized platform or session source. They run only on an interactive CLI, TUI, Desktop or ACP session, or a named human chat platform (Telegram, Discord, Slack, WhatsApp, Signal, Mattermost, Matrix, BlueBubbles).
 
-This is a conversational confirmation, not a Hermes approval card: Hermes does not route plugin tool calls through its dangerous-command approval prompt, and `ctx.ask_choice` only works inside a user-typed slash command, never in an agent tool call. The plugin never auto-approves, never touches Hermes' approval settings, and never waits on a prompt, so it cannot hang an unattended run.
-
-**Known limit:** a one-shot (`-q` / `-z`) turn submitted through the gateway daemon carries its "finite" flag in a private Hermes context variable that plugins cannot read. The plugin refuses it when Hermes also marks the session as one-shot (`HERMES_SINGLE_QUERY_SESSION` or a `oneshot` session source), but cannot detect a finite daemon turn that carries neither marker and runs on a local surface. `confirm: true` is still required there.
+Read-only tools (`list_availability`, `list_upcoming`) work everywhere and are never gated. The plugin never auto-approves, never changes Hermes' approval settings, and never waits on a prompt of its own, so it cannot hang an unattended run.
 
 ## Install
 

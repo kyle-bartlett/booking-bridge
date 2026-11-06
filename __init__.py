@@ -21,6 +21,8 @@ def register(ctx):
             return tools.status_text()
         return "Usage: /booking status"
 
+    ctx.register_hook("pre_tool_call", tools.approval_directive)
+
     ctx.register_command("booking", booking_command, description="Show Google sign-in state and next events",
                          args_hint="status")
     skill = Path(__file__).parent / "skills" / "consult-booking" / "SKILL.md"

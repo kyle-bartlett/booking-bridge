@@ -99,6 +99,37 @@ def _unattended():
     return None
 
 
+
+WRITE_TOOLS = ("book_event", "reschedule_event", "cancel_event")
+
+
+def approval_directive(tool_name: str = "", args=None, **kwargs):
+    """``pre_tool_call`` hook: send every calendar write to Hermes's own human-approval gate.
+
+    Returns ``{"action": "approve", ...}`` for the write tools (public hook contract). Hermes then asks the
+    person for Once / Session / Always, and fails the call closed wherever nobody can answer: cron, ``-q`` /
+    ``-z`` one-shot runs (including ones admitted through the gateway daemon), webhook-style platforms. Read-only
+    tools are untouched. Never raises: a malformed call still gets an approval request.
+    """
+    try:
+        if tool_name not in WRITE_TOOLS:
+            return None
+        a = args if isinstance(args, dict) else {}
+        what = {
+            "book_event": lambda: f"Book \"{a.get('title', '')}\" on {a.get('start', '?')} to {a.get('end', '?')}",
+            "reschedule_event": lambda: f"Move event {a.get('event_id', '?')} to {a.get('start', '?')} - {a.get('end', '?')}",
+            "cancel_event": lambda: f"Cancel (delete) calendar event {a.get('event_id', '?')}",
+        }[tool_name]()
+        if tool_name == "book_event" and a.get("attendees"):
+            what += f" (invites: {', '.join(str(x) for x in a['attendees'][:5])})"
+        key = hashlib.sha256(json.dumps(a, sort_keys=True, default=str).encode()).hexdigest()[:16]
+        return {"action": "approve", "message": f"booking-bridge: {what} on Google Calendar",
+                "rule_key": f"booking-bridge:{tool_name}:{key}"}
+    except Exception:
+        return {"action": "approve", "message": f"booking-bridge: {tool_name} changes your Google Calendar",
+                "rule_key": f"booking-bridge:{tool_name}"}
+
+
 def _write_guard(args: dict):
     if args.get("confirm") is not True:
         return _err("Not done: confirm must be true, and only after the user explicitly agrees to this exact action.")

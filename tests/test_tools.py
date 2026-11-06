@@ -139,9 +139,11 @@ class T(unittest.TestCase):
     def test_register_matches_manifest(self):
         names = []
         extra = []
+        hooks = []
         ctx = types.SimpleNamespace(register_tool=lambda **k: names.append(k["name"]),
                                     register_command=lambda *a, **k: extra.append("cmd"),
                                     register_skill=lambda *a, **k: extra.append("skill"),
+                                    register_hook=lambda *a, **k: hooks.append(a[0]),
                                     get_config=lambda k, d=None: d, current_cron_execution=lambda: None)
         init.register(ctx)
         self.assertEqual(extra, ["cmd", "skill"])
@@ -149,6 +151,8 @@ class T(unittest.TestCase):
         for n in names:
             self.assertIn("  - " + n, manifest)
         self.assertEqual(len(names), 5)
+        self.assertEqual(hooks, ["pre_tool_call"])
+        self.assertIn("provides_hooks:\n  - pre_tool_call", manifest)
 
     def test_not_signed_in_names_command(self):
         with mock.patch.object(api, "credentialed_provider_request", side_effect=api.ProviderNotSignedIn("x")):
@@ -168,10 +172,27 @@ class T(unittest.TestCase):
             r = json.loads(tools.reschedule_event(args))
         self.assertFalse(r["ok"]); p2.assert_not_called()
 
+    def test_write_tools_escalate_to_hermes_approval(self):
+        for name, args in (("book_event", {"title": "Strategy consult", "start": "2027-01-05T10:00:00",
+                                           "end": "2027-01-05T10:30:00", "confirm": True}),
+                           ("reschedule_event", {"event_id": "e1", "start": "2027-01-05T11:00:00"}),
+                           ("cancel_event", {"event_id": "e1"}), ("book_event", None), ("cancel_event", "junk")):
+            d = tools.approval_directive(tool_name=name, args=args, task_id="t")
+            self.assertEqual(d["action"], "approve")
+            self.assertTrue(d["message"].startswith("booking-bridge:"))
+            self.assertTrue(d["rule_key"].startswith("booking-bridge:" + name))
+        a = tools.approval_directive(tool_name="book_event", args={"title": "x"})["rule_key"]
+        b = tools.approval_directive(tool_name="book_event", args={"title": "y"})["rule_key"]
+        self.assertNotEqual(a, b)
+
+    def test_read_tools_and_other_tools_not_gated(self):
+        for name in ("list_availability", "list_upcoming", "terminal", ""):
+            self.assertIsNone(tools.approval_directive(tool_name=name, args={}))
+
     def test_skill_registered(self):
         calls = []
         ctx = types.SimpleNamespace(register_tool=lambda **k: None, register_command=lambda *a, **k: None,
-                                    register_skill=lambda *a, **k: calls.append(a),
+                                    register_skill=lambda *a, **k: calls.append(a), register_hook=lambda *a, **k: None,
                                     get_config=lambda k, d=None: d, current_cron_execution=lambda: None)
         init.register(ctx)
         self.assertEqual(calls[0][0], "consult-booking")

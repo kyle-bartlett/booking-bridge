@@ -1,5 +1,5 @@
 name: booking-bridge
-version: "1.0.3"
+version: "1.1.0"
 description: "Find free time, book, list, reschedule and cancel real Google Calendar consults from Hermes, using Hermes' own Google sign-in."
 author: Kyle Bartlett / Bartlett Labs
 license: MIT
@@ -12,6 +12,8 @@ provides_tools:
   - book_event
   - reschedule_event
   - cancel_event
+provides_hooks:
+  - pre_tool_call
 requires_env:
   - name: BOOKING_BRIDGE_CLIENT_ID
     description: "Google Cloud OAuth client ID (Desktop app) with the Calendar API enabled"
