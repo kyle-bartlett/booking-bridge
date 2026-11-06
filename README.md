@@ -15,13 +15,16 @@ A native Hermes plugin that finds free time, books, lists, reschedules and cance
 Slash command: `/booking status` shows whether Google is signed in and your next events.
 
 ### When write tools run
-`book_event`, `reschedule_event` and `cancel_event` need `confirm: true`, which the agent sets only after you agree to the exact action in the conversation. They **refuse to run** (and change nothing) in:
+`book_event`, `reschedule_event` and `cancel_event` need `confirm: true`, which the agent sets only after you agree to the exact action in the conversation. They run only when the plugin can tell a person is present, using an **allowlist**:
 
-- cron / scheduled runs,
-- single-query runs (`hermes chat -q`),
-- the programmatic `webhook`, `msgraph_webhook` and `api_server` platforms.
+- **Run:** an interactive CLI, TUI, Desktop or ACP session, and these human chat platforms: Telegram, Discord, Slack, WhatsApp (including WhatsApp Cloud), Signal, Mattermost, Matrix, BlueBubbles. Your reply in the chat is the approval.
+- **Refuse, changing nothing:** cron runs, single-query / one-shot runs (`hermes chat -q`, `hermes -z`), kanban workers, the `webhook`, `msgraph_webhook` and `api_server` platforms, email, SMS, and **any platform or session source not named above**, including new or unknown ones.
 
-They **do run** in an interactive CLI, TUI or Desktop session and in human chat gateways (for example Telegram), where your reply in the chat is the approval. This is a conversational confirmation, not a Hermes approval card: Hermes does not route plugin tool calls through its dangerous-command approval prompt. Read-only tools (`list_availability`, `list_upcoming`) work everywhere.
+Read-only tools (`list_availability`, `list_upcoming`) work everywhere.
+
+This is a conversational confirmation, not a Hermes approval card: Hermes does not route plugin tool calls through its dangerous-command approval prompt, and `ctx.ask_choice` only works inside a user-typed slash command, never in an agent tool call. The plugin never auto-approves, never touches Hermes' approval settings, and never waits on a prompt, so it cannot hang an unattended run.
+
+**Known limit:** a one-shot (`-q` / `-z`) turn submitted through the gateway daemon carries its "finite" flag in a private Hermes context variable that plugins cannot read. The plugin refuses it when Hermes also marks the session as one-shot (`HERMES_SINGLE_QUERY_SESSION` or a `oneshot` session source), but cannot detect a finite daemon turn that carries neither marker and runs on a local surface. `confirm: true` is still required there.
 
 ## Install
 

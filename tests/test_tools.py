@@ -25,6 +25,7 @@ tools = __import__(pkg + ".tools", fromlist=["x"])
 api = __import__(pkg + ".calendar_api", fromlist=["x"])
 init = __import__(pkg, fromlist=["x"])
 
+ENVKEYS = ("HERMES_CRON_SESSION", "HERMES_SINGLE_QUERY_SESSION", "HERMES_SESSION_PLATFORM", "HERMES_SESSION_SOURCE", "HERMES_KANBAN_TASK")
 NEXT = (datetime.now(timezone.utc) + timedelta(days=3)).replace(hour=15, minute=0, second=0, microsecond=0)
 iso = lambda d: d.isoformat()
 
@@ -83,8 +84,11 @@ class T(unittest.TestCase):
         return out, touched
 
     def test_unattended_contexts_fail_closed(self):
-        clean = {k: "" for k in ("HERMES_CRON_SESSION", "HERMES_SINGLE_QUERY_SESSION", "HERMES_SESSION_PLATFORM")}
-        for label, env in (("cron", {"HERMES_CRON_SESSION": "1"}), ("single-query", {"HERMES_SINGLE_QUERY_SESSION": "1"}),
+        clean = {k: "" for k in ENVKEYS}
+        for label, env in (("kanban", {"HERMES_KANBAN_TASK": "t1"}), ("oneshot source", {"HERMES_SESSION_SOURCE": "oneshot"}),
+                           ("unknown platform", {"HERMES_SESSION_PLATFORM": "some_new_plugin_platform"}),
+                           ("email", {"HERMES_SESSION_PLATFORM": "email"}),
+                           ("unknown source", {"HERMES_SESSION_SOURCE": "automation"}),("cron", {"HERMES_CRON_SESSION": "1"}), ("single-query", {"HERMES_SINGLE_QUERY_SESSION": "1"}),
                            ("webhook", {"HERMES_SESSION_PLATFORM": "webhook"}),
                            ("msgraph_webhook", {"HERMES_SESSION_PLATFORM": "msgraph_webhook"}),
                            ("api_server", {"HERMES_SESSION_PLATFORM": "api_server"})):
@@ -101,8 +105,8 @@ class T(unittest.TestCase):
             tools.bind(None)
 
     def test_interactive_and_chat_gateway_allowed(self):
-        clean = {k: "" for k in ("HERMES_CRON_SESSION", "HERMES_SINGLE_QUERY_SESSION")}
-        for platform in ("", "cli", "telegram"):
+        clean = {k: "" for k in ENVKEYS}
+        for platform in ("", "cli", "local", "telegram", "slack"):
             with self.subTest(platform), mock.patch.dict(os.environ, dict(clean, HERMES_SESSION_PLATFORM=platform)):
                 out, touched = self._write_all()
                 self.assertTrue(touched)

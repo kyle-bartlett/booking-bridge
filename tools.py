@@ -66,12 +66,18 @@ def _truthy(v: str) -> bool:
     return str(v).strip().lower() in ("1", "true", "yes", "on")
 
 
-def _unattended():
-    """Reason string when nobody is present to approve a calendar change, else None.
+# Allowlist, not denylist: anything not named here (unknown plugin platforms, kanban, email, sms, relay, ...) fails closed.
+_LOCAL_SURFACES = {"", "local", "cli", "tui", "desktop", "acp", "gateway"}
+_HUMAN_CHAT_PLATFORMS = {"telegram", "discord", "slack", "whatsapp", "whatsapp_cloud", "signal", "mattermost",
+                         "matrix", "bluebubbles"}
 
-    Blocked: cron runs, single-query (-q) runs, and the programmatic webhook / msgraph_webhook /
-    api_server platforms. Interactive CLI/TUI/desktop and human chat gateways are allowed: the user's
-    explicit agreement in the live conversation is what confirm=true records.
+
+def _unattended():
+    """Reason string when we cannot show a person is present to approve a calendar change, else None.
+
+    Allowed only on a local interactive surface (CLI, TUI, Desktop, ACP) or a named human chat platform. Cron,
+    single-query / one-shot runs, kanban workers, webhook-style platforms and every unrecognized platform or
+    source are refused. The user's explicit agreement in the live conversation is what confirm=true records.
     """
     try:
         if _CTX is not None and _CTX.current_cron_execution() is not None:
@@ -82,9 +88,14 @@ def _unattended():
         return "a scheduled cron run"
     if _truthy(_session_env("HERMES_SINGLE_QUERY_SESSION")):
         return "a single-query (-q) run"
-    platform = _session_env("HERMES_SESSION_PLATFORM")
-    if platform in _UNATTENDED_PLATFORMS:
-        return f"the unattended {platform} platform"
+    if _session_env("HERMES_KANBAN_TASK"):
+        return "a kanban worker"
+    platform = _session_env("HERMES_SESSION_PLATFORM").strip().lower()
+    source = _session_env("HERMES_SESSION_SOURCE").strip().lower()
+    if platform not in _LOCAL_SURFACES and platform not in _HUMAN_CHAT_PLATFORMS:
+        return f"an unrecognized or unattended platform ({platform})"
+    if source not in _LOCAL_SURFACES and source not in _HUMAN_CHAT_PLATFORMS:
+        return f"an unrecognized or unattended session source ({source})"
     return None
 
 
